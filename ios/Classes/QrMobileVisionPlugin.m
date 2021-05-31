@@ -1,6 +1,15 @@
 @import AVFoundation;
 
 #import "QrMobileVisionPlugin.h"
+#if __has_include(<qr_mobile_vision/qr_mobile_vision-Swift.h>)
+#import <qr_mobile_vision/qr_mobile_vision-Swift.h>
+#else
+// Support project import fallback if the generated compatibility header
+// is not copied when this plugin is created as a library.
+// https://forums.swift.org/t/swift-static-libraries-dont-copy-generated-objective-c-header/19816
+#import "qr_mobile_vision-Swift.h"
+#endif
+
 #import <libkern/OSAtomic.h>
 
 @interface NSError (FlutterError)
@@ -39,7 +48,7 @@
     NSAssert(self, @"super init cannot be nil");
     _captureSession = [[AVCaptureSession alloc] init];
     _isScanning = NO;
-    
+
     if (@available(iOS 10.0, *)) {
         _captureDevice = [AVCaptureDevice defaultDeviceWithDeviceType:AVCaptureDeviceTypeBuiltInWideAngleCamera mediaType:AVMediaTypeVideo position:AVCaptureDevicePositionBack];
     } else {
@@ -49,12 +58,12 @@
                 break;
             }
         }
-        
+
         if (_captureDevice == nil) {
             _captureDevice = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeVideo];
         }
     }
-    
+
     NSError *localError = nil;
     AVCaptureInput *input = [AVCaptureDeviceInput deviceInputWithDevice:_captureDevice error:&localError];
     if (localError) {
@@ -62,23 +71,23 @@
         return nil;
     }
     _previewSize = CMVideoFormatDescriptionGetDimensions([[_captureDevice activeFormat] formatDescription]);
-    
+
     AVCaptureVideoDataOutput *output = [AVCaptureVideoDataOutput new];
-    
+
     output.videoSettings =
     @{(NSString *)kCVPixelBufferPixelFormatTypeKey : @(kCVPixelFormatType_32BGRA) };
     [output setAlwaysDiscardsLateVideoFrames:YES];
     dispatch_queue_t queue = dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0);
     [output setSampleBufferDelegate:self queue:queue];
-    
+
     AVCaptureConnection *connection =
     [AVCaptureConnection connectionWithInputPorts:input.ports output:output];
     connection.videoOrientation = AVCaptureVideoOrientationPortrait;
-    
+
     [_captureSession addInputWithNoConnections:input];
     [_captureSession addOutputWithNoConnections:output];
     [_captureSession addConnection:connection];
-    
+
     return self;
 }
 
@@ -105,13 +114,13 @@
 didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
        fromConnection:(AVCaptureConnection *)connection {
     // runs on main queue
-    
+
     // create a new buffer in the form of a CGImage containing the image.
     // NOTE: it must be released manually!
     //    CGImageRef cgImageRef = [self cgImageRefFromCMSampleBufferRef:sampleBuffer];
-    
+
     CVPixelBufferRef newBuffer = CMSampleBufferGetImageBuffer(sampleBuffer);
-    
+
     CFRetain(newBuffer);
     CVPixelBufferRef old = _latestPixelBuffer;
     while (!OSAtomicCompareAndSwapPtrBarrier(old, newBuffer, (void **)&_latestPixelBuffer)) {
@@ -120,19 +129,19 @@ didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
     if (old != nil) {
         CFRelease(old);
     }
-    
+
     dispatch_sync(dispatch_get_main_queue(), ^{
         self.onFrameAvailable();
     });
-    
+
     if (_isScanning)
         return;
-    
+
     _isScanning = YES;
-    
+
     CVImageBufferRef imageBuf = CMSampleBufferGetImageBuffer(sampleBuffer);
     CIImage* frame = [CIImage imageWithCVImageBuffer: imageBuf];
-    
+
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         NSArray<CIFeature *> *features = nil;
         @autoreleasepool {
@@ -141,7 +150,7 @@ didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
                                                              options:nil];
             features = [barcodeDetector featuresInImage:frame];
         }
-        
+
         if (features.count > 0) {
             CIQRCodeFeature *feature0 = (CIQRCodeFeature *)features[0];
             NSString * value = feature0.messageString;
@@ -150,11 +159,11 @@ didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
                 self->_onCodeAvailable(value);
             });
         }
-        
+
         self->_isScanning = NO;
     });
-    
-    
+
+
 }
 
 - (void)heartBeat {
@@ -295,4 +304,3 @@ didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
 }
 
 @end
-
